@@ -44,22 +44,35 @@ function request(method, url, headers, body) {
       res.on("data", (c) => (data += c));
       res.on("end", () => {
         let json; try { json = JSON.parse(data); } catch { json = { raw: data }; }
-        res.statusCode >= 400 ? reject({ status: res.statusCode, body: json }) : resolve(json);
+        if (res.statusCode >= 400) {
+          console.error(`[BRADESCO] ${method} ${url} -> ${res.statusCode}`, JSON.stringify(json));
+          reject({ status: res.statusCode, body: json });
+        } else {
+          resolve(json);
+        }
       });
     });
-    req.on("error", reject);
+    req.on("error", (err) => {
+      console.error("[BRADESCO] request error:", err.message);
+      reject(err);
+    });
     if (body) req.write(body);
     req.end();
   });
 }
 
 async function getToken() {
-  const auth = Buffer.from(`${process.env.BRADESCO_CLIENT_ID}:${process.env.BRADESCO_CLIENT_SECRET}`).toString("base64");
-  const r = await request("POST", `${BASE}/auth/server/oauth/token`, {
-    Authorization: `Basic ${auth}`,
-    "Content-Type": "application/x-www-form-urlencoded",
-  }, "grant_type=client_credentials");
-  return r.access_token;
+  try {
+    const auth = Buffer.from(`${process.env.BRADESCO_CLIENT_ID}:${process.env.BRADESCO_CLIENT_SECRET}`).toString("base64");
+    const r = await request("POST", `${BASE}/auth/server/oauth/token`, {
+      Authorization: `Basic ${auth}`,
+      "Content-Type": "application/x-www-form-urlencoded",
+    }, "grant_type=client_credentials");
+    return r.access_token;
+  } catch (e) {
+    console.error("[BRADESCO] getToken failed:", JSON.stringify(e.body || e));
+    throw e;
+  }
 }
 
 const app = express();
@@ -82,6 +95,7 @@ app.post("/pix", async (req, res) => {
     }));
     res.json({ txid, qrcode: cob.pixCopiaECola || cob.location, cobranca: cob });
   } catch (e) {
+    console.error("[/pix] error:", JSON.stringify(e.body || e));
     res.status(e.status || 500).json({ error: e.body || String(e) });
   }
 });
@@ -103,6 +117,7 @@ app.post("/webhook", async (req, res) => {
     );
     res.json({ ok: true, webhook: out });
   } catch (e) {
+    console.error("[/webhook] error:", JSON.stringify(e.body || e));
     res.status(e.status || 500).json({ error: e.body || String(e) });
   }
 });

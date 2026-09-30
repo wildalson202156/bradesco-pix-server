@@ -1,5 +1,7 @@
 // Servidor Node separado para Pix Bradesco com mTLS (certificado .p12).
 // Hospede em um serviço Node (Render, Railway, VPS). Não roda dentro do app.
+// O certificado pode vir da variável BRADESCO_CERT_BASE64 (conteúdo .p12 em base64)
+// ou do arquivo certs/bradesco.p12 (fallback).
 import express from "express";
 import https from "https";
 import fs from "fs";
@@ -9,9 +11,34 @@ import crypto from "crypto";
 const BASE = process.env.BRADESCO_BASE_URL || "https://qrpix-h.bradesco.com.br";
 const CERT_PATH = process.env.BRADESCO_CERT_PATH || path.resolve("certs/bradesco.p12");
 
+// Resolve o certificado: BRADESCO_CERT_BASE64 tem prioridade; se não existir,
+// usa o arquivo em CERT_PATH.
+function resolveCert() {
+  if (process.env.BRADESCO_CERT_BASE64) {
+    const tmpPath = path.resolve("/tmp/bradesco.p12");
+    fs.writeFileSync(tmpPath, Buffer.from(process.env.BRADESCO_CERT_BASE64, "base64"));
+    return tmpPath;
+  }
+  return CERT_PATH;
+}
+
+let resolvedCertPath = null;
+
+// Aceita PEM (BRADESCO_CERT_PEM + BRADESCO_KEY_PEM, texto ou base64) ou .p12.
+function pem(v) {
+  if (!v) return null;
+  return v.includes("-----BEGIN") ? v.replace(/\\n/g, "\n") : Buffer.from(v, "base64").toString("utf8");
+}
+
 function agent() {
+  const cert = pem(process.env.BRADESCO_CERT_PEM);
+  const key = pem(process.env.BRADESCO_KEY_PEM);
+  if (cert && key) {
+    return new https.Agent({ cert, key, passphrase: process.env.BRADESCO_CERT_PASSWORD || undefined });
+  }
+  if (!resolvedCertPath) resolvedCertPath = resolveCert();
   return new https.Agent({
-    pfx: fs.readFileSync(CERT_PATH),
+    pfx: fs.readFileSync(resolvedCertPath),
     passphrase: process.env.BRADESCO_CERT_PASSWORD || "",
   });
 }
@@ -65,6 +92,9 @@ app.post("/pix", async (req, res) => {
   }
 });
 
-app.get("/health", (_q, r) => r.json({ ok: true, cert: fs.existsSync(CERT_PATH) }));
+app.get("/health", (_q, r) => {
+  const fromBase64 = Boolean(process.env.BRADESCO_CERT_BASE64);
+  r.json({ ok: true, cert: fromBase64 || fs.existsSync(CERT_PATH), certSource: fromBase64 ? "env:BRADESCO_CERT_BASE64" : "file:" + CERT_PATH });
+});
 
 app.listen(process.env.PORT || 3000, () => console.log("Bradesco Pix mTLS on", process.env.PORT || 3000));

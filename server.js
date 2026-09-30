@@ -1,8 +1,4 @@
 // Separate Node server for Bradesco Pix with mTLS (certificate .p12 or PEM).
-// Host it on a Node service (Render, Railway, VPS). It does not run inside the app.
-// The certificate can come from the BRADESCO_CERT_PEM + BRADESCO_KEY_PEM env vars,
-// the BRADESCO_CERT_BASE64 env var (.p12 content in base64), or the
-// certs/bradesco.p12 file (fallback).
 import express from "express";
 import https from "https";
 import fs from "fs";
@@ -12,8 +8,6 @@ import crypto from "crypto";
 const BASE = process.env.BRADESCO_BASE_URL || "https://qrpix-h.bradesco.com.br";
 const CERT_PATH = process.env.BRADESCO_CERT_PATH || path.resolve("certs/bradesco.p12");
 
-// Resolves the certificate: BRADESCO_CERT_BASE64 takes priority; otherwise
-// uses the file at CERT_PATH.
 function resolveCert() {
   if (process.env.BRADESCO_CERT_BASE64) {
     const tmpPath = path.resolve("/tmp/bradesco.p12");
@@ -25,7 +19,6 @@ function resolveCert() {
 
 let resolvedCertPath = null;
 
-// Accepts PEM (BRADESCO_CERT_PEM + BRADESCO_KEY_PEM, raw text or base64) or .p12.
 function pem(v) {
   if (!v) return null;
   return v.includes("-----BEGIN") ? v.replace(/\\n/g, "\n") : Buffer.from(v, "base64").toString("utf8");
@@ -93,7 +86,6 @@ app.post("/pix", async (req, res) => {
   }
 });
 
-// Registers the Pix webhook URL with Bradesco (via the mTLS certificate).
 app.post("/webhook", async (req, res) => {
   try {
     const { webhookUrl } = req.body;
@@ -116,8 +108,11 @@ app.post("/webhook", async (req, res) => {
 });
 
 app.get("/health", (_q, r) => {
+  const hasPem = Boolean(process.env.BRADESCO_CERT_PEM && process.env.BRADESCO_KEY_PEM);
   const fromBase64 = Boolean(process.env.BRADESCO_CERT_BASE64);
-  r.json({ ok: true, cert: fromBase64 || fs.existsSync(CERT_PATH), certSource: fromBase64 ? "env:BRADESCO_CERT_BASE64" : "file:" + CERT_PATH });
+  const certOk = hasPem || fromBase64 || fs.existsSync(CERT_PATH);
+  const source = hasPem ? "env:BRADESCO_CERT_PEM" : fromBase64 ? "env:BRADESCO_CERT_BASE64" : "file:" + CERT_PATH;
+  r.json({ ok: true, cert: certOk, certSource: source });
 });
 
 app.listen(process.env.PORT || 3000, () => console.log("Bradesco Pix mTLS on", process.env.PORT || 3000));

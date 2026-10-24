@@ -24,7 +24,7 @@ app.post('/token', async (req,res)=>{
     const agent = getAgent();
     const params = new URLSearchParams();
     params.append('grant_type','client_credentials');
-    const resp = await axios.post('https://qrsandbox.bradesco.com.br/pf/oauth/token', params, {
+    const resp = await axios.post('https://openapisandbox.prebanco.com.br/auth/server-mtls/v2/token', params, {
       httpsAgent: agent,
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded'

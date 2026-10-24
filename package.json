@@ -1,6 +1,15 @@
 {
-  "name": "bradesco-pix-server",
-  "type": "module",
-  "scripts": { "start": "node server.js" },
-  "dependencies": { "express": "^4.19.2" }
+  "name": "pix-bradesco-proxy",
+  "version": "1.0.0",
+  "main": "server.js",
+  "dependencies": {
+    "express": "^4.18.2",
+    "axios": "^1.6.0",
+    "https": "^1.0.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.0.0"
+  },
+  "scripts": {
+    "start": "node server.js"
+  }
 }

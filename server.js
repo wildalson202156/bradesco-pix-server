@@ -1,52 +1,47 @@
 const express = require('express');
+const axios = require('axios');
+const https = require('https');
 const cors = require('cors');
 require('dotenv').config();
-
 const app = express();
-app.use(cors({ origin: '*' }));
+app.use(cors({origin:'*'}));
 app.use(express.json());
 
-function getCerts() {
-  let cert = process.env.BRADESCO_CERT || '';
-  let key = process.env.BRADESCO_KEY || '';
-  if (cert && key) {
-    cert = cert.replace(/\\n/g, '\n');
-    key = key.replace(/\\n/g, '\n');
-    return { cert, key };
-  }
-  return null;
+function getAgent(){
+ let c=(process.env.BRADESCO_CERT||'').replace(/\\n/g,'\n');
+ let k=(process.env.BRADESCO_KEY||'').replace(/\\n/g,'\n');
+ if(!c||!k) return null;
+ return new https.Agent({cert:c,key:k});
 }
-
-const certs = getCerts();
-
-// ROTAS DE SAÚDE - pra Lovable não dar mais 404
-app.get('/', (req, res) => res.json({ status: 'live', certificado: certs ? 'OK' : 'ausente' }));
-app.get('/status', (req, res) => res.json({ servidor: 'Bradesco Pix PRODUCAO', certificado: certs ? 'OK' : 'ausente', tem_cert: !!certs }));
-app.get('/health', (req, res) => res.json({ ok: true }));
-app.get('/api/status', (req, res) => res.json({ ok: true, certificado: certs ? 'OK' : 'ausente' }));
-
-// ROTA QUE O LOVABLE CHAMA PRA GERAR PIX
-// Aceita qualquer nome que o Lovable use
-async function gerarPixHandler(req, res) {
-  const { valor, nome } = req.body || req.query;
-  console.log('Pedido de Pix:', valor, nome);
-  
-  // Aqui entra sua lógica real do Bradesco com axios + https.Agent
-  // Por enquanto retorna teste pra acabar o 404
-  res.json({ 
-    ok: true, 
-    mensagem: 'Servidor PRODUCAO OK - certificado carregado',
-    qrcode: '00020101021226880014br.gov.bcb.pix...',
-    valor: valor || '1.00'
-  });
+async function getToken(){
+ const agent=getAgent();
+ const id=process.env.BRADESCO_CLIENT_ID;
+ const secret=process.env.BRADESCO_CLIENT_SECRET;
+ const r=await axios.post('https://qrpix.bradesco.com.br/v2/oauth/token',
+  new URLSearchParams({grant_type:'client_credentials'}),
+  {httpsAgent:agent,auth:{username:id,password:secret},headers:{'Content-Type':'application/x-www-form-urlencoded'}}
+ );
+ return r.data.access_token;
 }
-
-app.post('/gerar-pix', gerarPixHandler);
-app.post('/api/pix', gerarPixHandler);
-app.post('/api/bradesco/pix', gerarPixHandler);
-app.post('/pix', gerarPixHandler);
-app.get('/gerar-pix', gerarPixHandler);
-app.get('/api/pix', gerarPixHandler);
-
-const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => console.log(`Servidor PRODUCAO rodando ${PORT} - cert: ${certs ? 'OK' : 'ausente'}`));
+app.get('/status',(req,res)=>res.json({certificado:getAgent()?'OK':'ausente',cnpj:process.env.BRADESCO_CHAVE_PIX}));
+app.get('/gerar-pix', async (req,res)=>{
+ try{
+  const valor=req.query.valor||req.body?.valor||'1.00';
+  const agent=getAgent();
+  if(!agent) return res.status(500).json({error:'sem cert'});
+  const token=await getToken();
+  const chave=process.env.BRADESCO_CHAVE_PIX||'34340333000181';
+  const cob=await axios.post('https://qrpix.bradesco.com.br/v2/cob',{
+   calendario:{expiracao:3600},
+   valor:{original:Number(valor).toFixed(2)},
+   chave:chave,
+   solicitacaoPagador:'DG Crediario'
+  },{httpsAgent:agent,headers:{Authorization:`Bearer ${token}`}});
+  res.json({ok:true,pixCopiaECola:cob.data.pixCopiaECola,txid:cob.data.txid,valor});
+ }catch(e){
+  res.status(500).json({error:'Bradesco erro',details:e.response?.data||e.message});
+ }
+});
+app.post('/gerar-pix', (req,res)=>{ req.query=req.body; return app._router.handle({...req,method:'GET',url:'/gerar-pix?valor='+req.body.valor},res); });
+const PORT=process.env.PORT||10000;
+app.listen(PORT,()=>console.log('PRODUCAO REAL '+PORT));

@@ -44,7 +44,7 @@ app.get('/gerar-pix', async (req,res)=>{
     const agent = getAgent();
     const token = await getToken();
     const valor = Number(req.query.valor||'1').toFixed(2);
-    const cob = await axios.post('https://qrpix.bradesco.com.br/v2/cob',{
+    const cob = await axios.post('https://qrpix.bradesco.com.br/v2/cobv',{
       calendario:{expiracao:3600},
       valor:{original:valor},
       chave: process.env.BRADESCO_CHAVE_PIX || '34340333000181',

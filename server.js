@@ -9,10 +9,7 @@ const app = express();
 app.use(cors({origin:'*'}));
 app.use(express.json());
 
-// ROTA TESTE - pra não dar 404
-app.get('/', (req,res)=>{
-  res.send('API Bradesco Pix ON - use /gerar-pix?valor=1');
-});
+app.get('/', (req,res)=> res.send('API Bradesco Pix ON - use /gerar-pix?valor=1'));
 
 app.get('/status', (req,res)=>{
   const hasCert = fs.existsSync('/etc/secrets/cert.pem') || !!process.env.BRADESCO_CERT;
@@ -43,15 +40,20 @@ function getAgent(){
   try{
     const k = crypto.createPrivateKey({key, format:'pem'});
     key = k.export({type:'pkcs8', format:'pem'}).toString();
-  }catch(e){ console.log('key convert:',e.message); }
-  return new https.Agent({cert, key, rejectUnauthorized:true});
+  }catch(e){}
+  return new https.Agent({cert, key});
 }
 
 async function getToken(){
   const agent = getAgent();
-  if(!agent) throw new Error('Certificado não encontrado em Secret Files');
+  if(!agent) throw new Error('Cert não achado');
+  // AQUI ESTÁ A CORREÇÃO DO 114
+  const params = new URLSearchParams({
+    grant_type:'client_credentials',
+    scope:'cob.write cob.read pix.read webhook.read webhook.write'
+  });
   const resp = await axios.post('https://qrpix.bradesco.com.br/v2/oauth/token',
-    new URLSearchParams({grant_type:'client_credentials'}),
+    params,
     {
       httpsAgent: agent,
       auth:{username:process.env.BRADESCO_CLIENT_ID, password:process.env.BRADESCO_CLIENT_SECRET},
@@ -63,7 +65,7 @@ async function getToken(){
 app.get('/gerar-pix', async (req,res)=>{
   try{
     const agent = getAgent();
-    if(!agent) return res.status(500).json({erro:'Cert não carregado. Coloque cert.pem e key.pem em Secret Files'});
+    if(!agent) return res.status(500).json({erro:'Cert não carregado'});
     const token = await getToken();
     const valor = Number(req.query.valor || '1.00').toFixed(2);
     const cob = await axios.post('https://qrpix.bradesco.com.br/v2/cob',{
@@ -75,11 +77,10 @@ app.get('/gerar-pix', async (req,res)=>{
       httpsAgent: agent,
       headers:{Authorization:`Bearer ${token}`}
     });
-    res.json({ok:true, pixCopiaECola: cob.data.pixCopiaECola, txid: cob.data.txid, valor});
+    res.json({ok:true, pixCopiaECola: cob.data.pixCopiaECola, txid: cob.data.txid});
   }catch(e){
     res.status(500).json({erro:'Bradesco', detalhe: e.response?.data || e.message});
   }
 });
 
-const PORT = process.env.PORT || 10000;
-app.listen(PORT, ()=>console.log('Bradesco OK porta '+PORT));
+app.listen(process.env.PORT||10000, ()=>console.log('Bradesco com scope OK'));

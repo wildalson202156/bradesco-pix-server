@@ -10,10 +10,22 @@ app.use(cors({origin:'*'}));
 app.use(express.json());
 
 function getAgent(){
-  const cert = fs.readFileSync('/etc/secrets/cert.pem','utf8');
-  let key = fs.readFileSync('/etc/secrets/key.pem','utf8');
-  try{ key = crypto.createPrivateKey({key,format:'pem'}).export({type:'pkcs8',format:'pem'}).toString(); }catch(e){}
-  return new https.Agent({cert, key, keepAlive:true});
+  try {
+    const certPath = '/etc/secrets/cert.pem';
+    const keyPath = '/etc/secrets/key.pem';
+    console.log("Lendo cert:", fs.existsSync(certPath), "key:", fs.existsSync(keyPath));
+    if (!fs.existsSync(certPath) || !fs.existsSync(keyPath)) {
+      throw new Error("cert.pem ou key.pem NAO encontrado em /etc/secrets/");
+    }
+    const cert = fs.readFileSync(certPath,'utf8');
+    let key = fs.readFileSync(keyPath,'utf8');
+    console.log("Tamanhos cert:", cert.length, "key:", key.length);
+    try{ key = crypto.createPrivateKey({key,format:'pem'}).export({type:'pkcs8',format:'pem'}).toString(); }catch(e){}
+    return new https.Agent({cert, key, keepAlive:true, rejectUnauthorized: true});
+  } catch(e){
+    console.error("ERRO getAgent:", e.message);
+    throw e;
+  }
 }
 
 async function getToken(){
@@ -27,17 +39,18 @@ async function getToken(){
   return r.data.access_token;
 }
 
-app.get('/gerar-pix', async (req,res)=>{
+async function criarCobranca(req, res){
   try{
+    console.log("COBV PUT RODANDO - query:", req.query, "body:", req.body);
     const agent = getAgent();
     const token = await getToken();
-    const valor = Number(req.query.valor||'1').toFixed(2);
+    console.log("Token OK");
     
+    const valor = Number(req.query.valor || req.body?.valor || '1').toFixed(2);
     const amanha = new Date(); 
     amanha.setDate(amanha.getDate()+1);
     const dataVenc = amanha.toISOString().split('T')[0];
     
-    // TXID obrigatorio para COBV no Bradesco - 26 a 35 caracteres
     const txid = 'DGMOTOS' + Date.now().toString().slice(-10) + crypto.randomBytes(4).toString('hex').toUpperCase();
 
     const body = {
@@ -53,13 +66,19 @@ app.get('/gerar-pix', async (req,res)=>{
       headers:{Authorization:`Bearer ${token}`}
     });
 
+    console.log("COBV PUT OK -", txid);
     res.json({ok:true, valor, vencimento:dataVenc, txid, pixCopiaECola:cob.data.pixCopiaECola, bradesco:cob.data});
 
   }catch(e){
-    console.log('ERRO:', e.response?.status, e.response?.data);
+    console.error('COBV PUT ERRO:', e.response?.status, JSON.stringify(e.response?.data));
     res.status(500).json({erro:e.response?.data || e.message, status:e.response?.status});
   }
-});
+}
+
+// ACEITA GET E POST - corrige o Cannot POST
+app.get('/gerar-pix', criarCobranca);
+app.post('/gerar-pix', criarCobranca);
 
 app.get('/', (req,res)=>res.send('COBV PUT OK - ' + new Date().toISOString()));
-app.listen(process.env.PORT||10000, ()=>console.log('COBV PUT RODANDO'));
+
+app.listen(process.env.PORT||10000, ()=>console.log('COBV PUT OK - Server live ' + new Date().toISOString()));

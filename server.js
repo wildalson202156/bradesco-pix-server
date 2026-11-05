@@ -11,10 +11,8 @@ app.use(express.json());
 
 function getAgent(){
   try{
-    const certPath = '/etc/secrets/cert.pem';
-    const keyPath = '/etc/secrets/key.pem';
-    const cert = fs.readFileSync(certPath,'utf8');
-    let key = fs.readFileSync(keyPath,'utf8');
+    const cert = fs.readFileSync('/etc/secrets/cert.pem','utf8');
+    let key = fs.readFileSync('/etc/secrets/key.pem','utf8');
     try{ key = crypto.createPrivateKey({key,format:'pem'}).export({type:'pkcs8',format:'pem'}).toString(); }catch(e){}
     return new https.Agent({cert, key, keepAlive:true});
   }catch(e){
@@ -25,16 +23,13 @@ function getAgent(){
 
 async function getToken(){
   const agent = getAgent();
-  const params = new URLSearchParams({
-    grant_type:'client_credentials',
-    scope:'cobv.write cobv.read cob.write cob.read pix.read'
-  });
+  const params = new URLSearchParams({grant_type:'client_credentials'});
   const r = await axios.post('https://qrpix.bradesco.com.br/v2/oauth/token', params, {
     httpsAgent: agent,
     auth:{username:process.env.BRADESCO_CLIENT_ID, password:process.env.BRADESCO_CLIENT_SECRET},
     headers:{'Content-Type':'application/x-www-form-urlencoded'}
   });
-  console.log("Token OK, escopo:", r.data.scope);
+  console.log("Token OK - retorno:", JSON.stringify(r.data).substring(0,200));
   return r.data.access_token;
 }
 
@@ -59,6 +54,7 @@ async function criarCobranca(req,res){
       solicitacaoPagador:'DG MOTOS - PARCELA'
     };
 
+    console.log("Enviando COBV:", txid, valor);
     const cob = await axios.put(`https://qrpix.bradesco.com.br/v2/cobv/${txid}`, body, {
       httpsAgent: agent,
       headers:{Authorization:`Bearer ${token}`}

@@ -1,127 +1,107 @@
 const express = require('express');
+const cors = require('cors');
 const axios = require('axios');
 const https = require('https');
-const cors = require('cors');
 
 const app = express();
-app.use(cors({origin:'*'}));
+
+// LIBERA PARA LOVABLE E NAVEGADOR
+app.use(cors({ origin: "*" }));
 app.use(express.json());
 
-// PEGA O CERTIFICADO DO PFX QUE JÁ ESTÁ NA RENDER
-function getAgent(){
-  try{
-    const pfxBase64 = process.env.PFX_BASE64;
-    const senha = process.env.PFX_SENHA || '1234';
-    
-    if(!pfxBase64){
-      throw new Error("PFX_BASE64 não encontrado no Environment da Render");
-    }
+// ROTA DE TESTE
+app.get('/', (req, res) => {
+  res.send('Bradesco PIX Server ON - DG Motos');
+});
 
-    // Converte base64 para buffer
-    const pfxBuffer = Buffer.from(pfxBase64, 'base64');
+// FUNÇÃO PARA PEGAR TOKEN DO BRADESCO
+async function getBradescoToken() {
+  const cert = process.env.BRADESCO_CERT_PEM;
+  const key = process.env.BRADESCO_KEY_PEM;
 
-    console.log("Certificado PFX carregado OK, tamanho:", pfxBuffer.length);
+  if (!cert || !key) throw new Error("Certificado PEM não encontrado no ENV");
 
-    return new https.Agent({
-      pfx: pfxBuffer,
-      passphrase: senha,
-      keepAlive: true,
-      rejectUnauthorized: true
-    });
-  }catch(e){
-    console.error("ERRO AO LER CERTIFICADO:", e.message);
-    throw e;
-  }
-}
-
-// PEGA O TOKEN DO BRADESCO
-async function getToken(){
-  const agent = getAgent();
-  const baseUrl = process.env.BRADESCO_BASE_URL || 'https://qrsandbox.bradesco.com.br';
-  
-  const params = new URLSearchParams({grant_type:'client_credentials'});
-  
-  const r = await axios.post(`${baseUrl}/v2/oauth/token`, params, {
-    httpsAgent: agent,
-    auth:{
-      username: process.env.BRADESCO_CLIENT_ID, 
-      password: process.env.BRADESCO_CLIENT_SECRET
-    },
-    headers:{'Content-Type':'application/x-www-form-urlencoded'}
+  const agent = new https.Agent({
+    cert: cert,
+    key: key,
+    rejectUnauthorized: false
   });
-  
-  console.log("Token Bradesco OK");
-  return r.data.access_token;
+
+  const params = new URLSearchParams();
+  params.append('grant_type', 'client_credentials');
+  params.append('client_id', process.env.BRADESCO_CLIENT_ID);
+  params.append('client_secret', process.env.BRADESCO_CLIENT_SECRET);
+
+  const resp = await axios.post(
+    'https://qrapi.bradesco.com.br/parceiros/oauth/token',
+    params,
+    { httpsAgent: agent, headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
+  );
+  return resp.data.access_token;
 }
 
-// CRIA A COBRANÇA PIX COM VENCIMENTO (COBV)
-async function criarCobranca(req,res){
-  try{
-    const valorDigitado = req.query.valor || req.body?.valor || '1';
-    console.log("GERANDO PIX valor:", valorDigitado);
+// ROTA QUE O LOVABLE VAI CHAMAR - GERA PIX COBV (COM VENCIMENTO)
+app.post('/gerar-pix', async (req, res) => {
+  try {
+    console.log("Recebido do Lovable:", req.body);
     
-    const agent = getAgent();
-    const token = await getToken();
-    const baseUrl = process.env.BRADESCO_BASE_URL || 'https://qrsandbox.bradesco.com.br';
+    const { calendario, valor, chave, solicitacaoPagador } = req.body;
     
-    const valor = Number(valorDigitado).toFixed(2);
-    
-    // Vencimento amanhã
-    const amanha = new Date(); 
-    amanha.setDate(amanha.getDate()+1);
-    const dataVenc = amanha.toISOString().split('T')[0];
-    
-    // TXID único
-    const txid = 'DGMOTOS' + Date.now().toString().slice(-10) + Math.random().toString(36).substring(2,6).toUpperCase();
+    const cert = process.env.BRADESCO_CERT_PEM;
+    const key = process.env.BRADESCO_KEY_PEM;
 
-    const body = {
-      calendario:{
-        dataDeVencimento: dataVenc, 
-        validadeAposVencimento: 1
-      },
-      devedor:{
-        cnpj:'34340333000181', 
-        nome:'DG MOTOS LTDA'
-      },
-      valor:{
-        original: valor
-      },
-      chave: process.env.BRADESCO_PIX_KEY || '34340333000181',
-      solicitacaoPagador:'DG MOTOS - PARCELA'
+    const agent = new https.Agent({
+      cert: cert,
+      key: key,
+      rejectUnauthorized: false
+    });
+
+    const token = await getBradescoToken();
+    
+    // Gera TXID aleatório de 26 caracteres (padrão Bradesco)
+    const txid = `DG${Date.now()}${Math.floor(Math.random()*1000)}`.substring(0, 35);
+
+    const payloadBradesco = {
+      calendario: calendario || { dataDeVencimento: "2026-11-15", validadeAposVencimento: 30 },
+      valor: valor,
+      chave: chave || process.env.BRADESCO_PIX_KEY,
+      solicitacaoPagador: solicitacaoPagador || "DG Motos"
     };
 
-    console.log("Enviando para Bradesco:", txid, valor, baseUrl);
-    
-    const cob = await axios.put(`${baseUrl}/v2/cobv/${txid}`, body, {
-      httpsAgent: agent,
-      headers:{Authorization:`Bearer ${token}`}
-    });
+    console.log("Enviando pro Bradesco:", payloadBradesco, "TXID:", txid);
 
-    console.log("COBV CRIADO COM SUCESSO", txid);
-    
+    const resp = await axios.put(
+      `https://qrapi.bradesco.com.br/v2/cobv/${txid}`,
+      payloadBradesco,
+      {
+        httpsAgent: agent,
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+
+    console.log("Bradesco OK:", resp.data);
+
+    // Retorna o que o Lovable precisa
     res.json({
-      ok:true, 
-      valor, 
-      vencimento:dataVenc, 
-      txid, 
-      pixCopiaECola: cob.data.pixCopiaECola, 
-      qrCode: cob.data.pixCopiaECola,
-      bradesco: cob.data
+      txid: txid,
+      pixCopiaECola: resp.data.pixCopiaECola,
+      qrcode: resp.data.pixCopiaECola, // Bradesco retorna o copia e cola
+      location: resp.data.location,
+      dadosBradesco: resp.data
     });
 
-  }catch(e){
-    console.error('ERRO AO CRIAR COBV:', e.response?.status, JSON.stringify(e.response?.data || e.message));
-    res.status(e.response?.status || 500).json({
-      erro: e.response?.data || e.message, 
-      status: e.response?.status
+  } catch (err) {
+    console.error("ERRO 500 DETALHADO:", err.response ? err.response.data : err.message);
+    res.status(500).json({
+      erro: "Falha ao gerar PIX",
+      detalhe: err.response ? err.response.data : err.message,
+      dica: "Verifique se o certificado está com \\n correto e se CLIENT_ID/SECRET estão válidos"
     });
   }
-}
+});
 
-// ROTAS
-app.get('/gerar-pix', criarCobranca);
-app.post('/gerar-pix', criarCobranca);
-app.get('/', (req,res)=>res.send('COBV PUT OK - ' + new Date().toISOString() + ' - PFX carregado'));
-
-const porta = process.env.PORT || 10000;
-app.listen(porta, ()=>console.log('SERVIDOR NO AR - Porta ' + porta + ' - ' + new Date().toISOString()));
+const PORT = process.env.PORT || 10000;
+app.listen(PORT, () => console.log(`Server rodando na porta ${PORT}`));

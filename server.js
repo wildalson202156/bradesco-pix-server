@@ -7,24 +7,29 @@ const app = express();
 app.use(cors({ origin: "*" }));
 app.use(express.json());
 
-app.get('/', (req, res) => res.send('Bradesco PIX Server ON - DG Motos V3'));
+app.get('/', (req, res) => res.send('DG Motos PIX ON V4'));
 
 async function getBradescoToken() {
-  const cert = process.env.BRADESCO_CERT_PEM;
-  const key = process.env.BRADESCO_KEY_PEM;
+  const cert = process.env.BRADESCO_CERT_PEM.replace(/\\n/g, '\n');
+  const key = process.env.BRADESCO_KEY_PEM.replace(/\\n/g, '\n');
+  const clientId = process.env.BRADESCO_CLIENT_ID;
+  const clientSecret = process.env.BRADESCO_CLIENT_SECRET;
 
   const agent = new https.Agent({ cert, key, rejectUnauthorized: false });
 
-  const params = new URLSearchParams();
-  params.append('grant_type', 'client_credentials');
-  params.append('client_id', process.env.BRADESCO_CLIENT_ID);
-  params.append('client_secret', process.env.BRADESCO_CLIENT_SECRET);
+  // Bradesco exige Basic Auth
+  const basic = Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
 
-  // URL NOVA CORRETA
   const resp = await axios.post(
     'https://openapi.bradesco.com.br/parceiros/oauth/token',
-    params,
-    { httpsAgent: agent, headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
+    'grant_type=client_credentials',
+    {
+      httpsAgent: agent,
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Authorization': `Basic ${basic}`
+      }
+    }
   );
   return resp.data.access_token;
 }
@@ -32,8 +37,8 @@ async function getBradescoToken() {
 app.post('/gerar-pix', async (req, res) => {
   try {
     const { calendario, valor, chave, solicitacaoPagador } = req.body;
-    const cert = process.env.BRADESCO_CERT_PEM;
-    const key = process.env.BRADESCO_KEY_PEM;
+    const cert = process.env.BRADESCO_CERT_PEM.replace(/\\n/g, '\n');
+    const key = process.env.BRADESCO_KEY_PEM.replace(/\\n/g, '\n');
     const agent = new https.Agent({ cert, key, rejectUnauthorized: false });
 
     const token = await getBradescoToken();
@@ -41,7 +46,7 @@ app.post('/gerar-pix', async (req, res) => {
 
     const payload = {
       calendario: calendario || { dataDeVencimento: "2026-11-10", validadeAposVencimento: 30 },
-      valor: valor,
+      valor: valor || { original: "10.00" },
       chave: chave || process.env.BRADESCO_PIX_KEY || "34340333000181",
       solicitacaoPagador: solicitacaoPagador || "DG Motos"
     };
@@ -52,11 +57,12 @@ app.post('/gerar-pix', async (req, res) => {
       { httpsAgent: agent, headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' } }
     );
 
-    res.json({ txid, pixCopiaECola: resp.data.pixCopiaECola, dadosBradesco: resp.data });
+    res.json({ txid, pixCopiaECola: resp.data.pixCopiaECola, dados: resp.data });
 
   } catch (err) {
-    console.error("ERRO:", err.response ? err.response.data : err.message);
-    res.status(500).json({ erro: "Falha ao gerar PIX", detalhe: err.response ? err.response.data : err.message });
+    const detail = err.response ? JSON.stringify(err.response.data) : err.message;
+    console.error("ERRO:", detail);
+    res.status(500).json({ erro: "Falha", detalhe: detail });
   }
 });
 

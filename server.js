@@ -6,7 +6,7 @@ const app = express();
 app.use(cors({ origin: "*" }));
 app.use(express.json());
 
-app.get('/', (req,res)=>res.send('DG MOTOS PIX V7 ON - URL CORRIGIDA'));
+app.get('/', (req,res)=>res.send('DG MOTOS PIX V8 ON - TOKEN SEM CERT'));
 
 function getAgent(){
   let cert = process.env.BRADESCO_CERT_PEM || "";
@@ -16,61 +16,47 @@ function getAgent(){
   return new https.Agent({ cert: cert.trim(), key: key.trim(), rejectUnauthorized: false });
 }
 
+// TOKEN SEM CERTIFICADO!
 async function getToken(){
-  const agent = getAgent();
   const id = (process.env.BRADESCO_CLIENT_ID || "").trim();
   const secret = (process.env.BRADESCO_CLIENT_SECRET || "").trim();
   const basic = Buffer.from(`${id}:${secret}`).toString('base64');
+  const data = 'grant_type=client_credentials';
 
-  // TENTA AS 2 URLs QUE O BRADESCO USA
-  const urls = [
-    '/v2/oauth/token',
-    '/v1/oauth/token',
-    '/parceiros/oauth/token'
-  ];
-
-  for(const path of urls){
-    try{
-      const token = await new Promise((resolve, reject)=>{
-        const data = 'grant_type=client_credentials';
-        const options = {
-          hostname: 'openapi.bradesco.com.br',
-          path: path,
-          method: 'POST',
-          agent: agent,
-          headers: {
-            'Authorization': `Basic ${basic}`,
-            'Content-Type': 'application/x-www-form-urlencoded',
-            'Content-Length': Buffer.byteLength(data)
-          }
-        };
-        const req = https.request(options, (res)=>{
-          let body = '';
-          res.on('data', d=> body+=d);
-          res.on('end', ()=>{
-            console.log(`TENTATIVA ${path} -> STATUS:`, res.statusCode, body.substring(0,200));
-            if(res.statusCode >= 200 && res.statusCode < 300){
-              try{ resolve(JSON.parse(body).access_token); }catch(e){ reject(body); }
-            }else{ reject(`STATUS ${res.statusCode} em ${path}: ${body}`); }
-          });
-        });
-        req.on('error', reject);
-        req.write(data);
-        req.end();
+  return new Promise((resolve, reject)=>{
+    const options = {
+      hostname: 'openapi.bradesco.com.br',
+      path: '/v2/oauth/token',
+      method: 'POST',
+      headers: {
+        'Authorization': `Basic ${basic}`,
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Content-Length': Buffer.byteLength(data)
+      }
+    };
+    console.log("PEDINDO TOKEN SEM CERT para", options.path);
+    const req = https.request(options, (res)=>{
+      let body = '';
+      res.on('data', d=> body+=d);
+      res.on('end', ()=>{
+        console.log(`TOKEN STATUS: ${res.statusCode} BODY:`, body.substring(0,500));
+        if(res.statusCode >= 200 && res.statusCode < 300){
+          try{ resolve(JSON.parse(body).access_token); }catch(e){ reject(body); }
+        }else{ reject(`TOKEN ${res.statusCode}: ${body}`); }
       });
-      console.log("TOKEN CONSEGUIDO NA URL:", path);
-      return token;
-    }catch(e){
-      console.log("Falhou", path, e.toString().substring(0,200));
-    }
-  }
-  throw new Error("Todas as URLs de token falharam");
+    });
+    req.on('error', reject);
+    req.write(data);
+    req.end();
+  });
 }
 
 app.post('/gerar-pix', async (req,res)=>{
   try{
-    const agent = getAgent();
     const token = await getToken();
+    console.log("TOKEN OK:", token.substring(0,20)+"...");
+    
+    const agent = getAgent();
     const txid = `DG${Date.now()}`.substring(0,32);
     const payload = JSON.stringify({
       calendario: req.body.calendario || { dataDeVencimento: "2026-11-10", validadeAposVencimento: 30 },
@@ -109,4 +95,4 @@ app.post('/gerar-pix', async (req,res)=>{
   }
 });
 
-app.listen(process.env.PORT || 10000, ()=>console.log("V7 Rodando"));
+app.listen(process.env.PORT || 10000, ()=>console.log("V8 Rodando"));

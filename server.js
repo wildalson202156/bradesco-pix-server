@@ -1,70 +1,96 @@
 const express = require('express');
 const cors = require('cors');
-const axios = require('axios');
 const https = require('https');
 
 const app = express();
 app.use(cors({ origin: "*" }));
 app.use(express.json());
 
-app.get('/', (req, res) => res.send('DG Motos PIX ON V4'));
+app.get('/', (req,res)=>res.send('DG MOTOS PIX V6 ON'));
 
-async function getBradescoToken() {
-  const cert = process.env.BRADESCO_CERT_PEM.replace(/\\n/g, '\n');
-  const key = process.env.BRADESCO_KEY_PEM.replace(/\\n/g, '\n');
-  const clientId = process.env.BRADESCO_CLIENT_ID;
-  const clientSecret = process.env.BRADESCO_CLIENT_SECRET;
-
-  const agent = new https.Agent({ cert, key, rejectUnauthorized: false });
-
-  // Bradesco exige Basic Auth
-  const basic = Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
-
-  const resp = await axios.post(
-    'https://openapi.bradesco.com.br/parceiros/oauth/token',
-    'grant_type=client_credentials',
-    {
-      httpsAgent: agent,
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'Authorization': `Basic ${basic}`
-      }
-    }
-  );
-  return resp.data.access_token;
+function getAgent(){
+  let cert = process.env.BRADESCO_CERT_PEM || "";
+  let key = process.env.BRADESCO_KEY_PEM || "";
+  if(cert.includes('\\n')) cert = cert.replace(/\\n/g, '\n');
+  if(key.includes('\\n')) key = key.replace(/\\n/g, '\n');
+  return new https.Agent({ cert: cert.trim(), key: key.trim(), rejectUnauthorized: false });
 }
 
-app.post('/gerar-pix', async (req, res) => {
-  try {
-    const { calendario, valor, chave, solicitacaoPagador } = req.body;
-    const cert = process.env.BRADESCO_CERT_PEM.replace(/\\n/g, '\n');
-    const key = process.env.BRADESCO_KEY_PEM.replace(/\\n/g, '\n');
-    const agent = new https.Agent({ cert, key, rejectUnauthorized: false });
+async function getToken(){
+  const agent = getAgent();
+  const id = (process.env.BRADESCO_CLIENT_ID || "").trim();
+  const secret = (process.env.BRADESCO_CLIENT_SECRET || "").trim();
+  const basic = Buffer.from(`${id}:${secret}`).toString('base64');
 
-    const token = await getBradescoToken();
-    const txid = `DG${Date.now()}`.substring(0, 32);
-
-    const payload = {
-      calendario: calendario || { dataDeVencimento: "2026-11-10", validadeAposVencimento: 30 },
-      valor: valor || { original: "10.00" },
-      chave: chave || process.env.BRADESCO_PIX_KEY || "34340333000181",
-      solicitacaoPagador: solicitacaoPagador || "DG Motos"
+  return new Promise((resolve, reject)=>{
+    const data = 'grant_type=client_credentials';
+    const options = {
+      hostname: 'openapi.bradesco.com.br',
+      path: '/parceiros/oauth/token',
+      method: 'POST',
+      agent: agent,
+      headers: {
+        'Authorization': `Basic ${basic}`,
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Content-Length': Buffer.byteLength(data)
+      }
     };
+    const req = https.request(options, (res)=>{
+      let body = '';
+      res.on('data', d=> body+=d);
+      res.on('end', ()=>{
+        console.log("TOKEN STATUS:", res.statusCode, body.substring(0,200));
+        if(res.statusCode >= 200 && res.statusCode < 300){
+          try{ resolve(JSON.parse(body).access_token); }catch(e){ reject(body); }
+        }else{ reject(`STATUS ${res.statusCode}: ${body}`); }
+      });
+    });
+    req.on('error', reject);
+    req.write(data);
+    req.end();
+  });
+}
 
-    const resp = await axios.put(
-      `https://openapi.bradesco.com.br/v2/cobv/${txid}`,
-      payload,
-      { httpsAgent: agent, headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' } }
-    );
+app.post('/gerar-pix', async (req,res)=>{
+  try{
+    const agent = getAgent();
+    const token = await getToken();
+    const txid = `DG${Date.now()}`.substring(0,32);
+    const payload = JSON.stringify({
+      calendario: req.body.calendario || { dataDeVencimento: "2026-11-10", validadeAposVencimento: 30 },
+      valor: req.body.valor || { original: "10.00" },
+      chave: (req.body.chave || process.env.BRADESCO_PIX_KEY || "34340333000181").trim(),
+      solicitacaoPagador: req.body.solicitacaoPagador || "DG Motos"
+    });
 
-    res.json({ txid, pixCopiaECola: resp.data.pixCopiaECola, dados: resp.data });
+    const cobv = await new Promise((resolve, reject)=>{
+      const options = {
+        hostname: 'openapi.bradesco.com.br',
+        path: `/v2/cobv/${txid}`,
+        method: 'PUT',
+        agent: agent,
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(payload)
+        }
+      };
+      const r = https.request(options, (resp)=>{
+        let b=''; resp.on('data',d=>b+=d); resp.on('end',()=>{
+          console.log("COBV STATUS:", resp.statusCode, b.substring(0,300));
+          if(resp.statusCode>=200 && resp.statusCode<300) resolve(JSON.parse(b));
+          else reject(`COBV ${resp.statusCode}: ${b}`);
+        });
+      });
+      r.on('error', reject); r.write(payload); r.end();
+    });
 
-  } catch (err) {
-    const detail = err.response ? JSON.stringify(err.response.data) : err.message;
-    console.error("ERRO:", detail);
-    res.status(500).json({ erro: "Falha", detalhe: detail });
+    res.json({ txid, pixCopiaECola: cobv.pixCopiaECola, bradesco: cobv });
+
+  }catch(e){
+    console.error("ERRO FINAL:", e);
+    res.status(500).json({ erro:"Falha", detalhe: String(e).substring(0,1000) });
   }
 });
 
-const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => console.log(`Rodando ${PORT}`));
+app.listen(process.env.PORT || 10000, ()=>console.log("V6 Rodando"));

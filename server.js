@@ -29,29 +29,21 @@ app.post('/gerar-pix', async (req,res)=>{
  const parcela_id=(req.body.parcela_id||Date.now().toString()).replace(/\D/g,'').substring(0,20);
  const chave=process.env.BRADESCO_PIX_KEY||"34340333000181";
  const txid=`DG${parcela_id}`.substring(0,25);
-
- // TENTA OFICIAL
  try{
   const agent=getMtlsAgent();
   if(agent && process.env.BRADESCO_CLIENT_ID){
-   // Token MTLS - URL está no seu JSON de Token MTLS Produção
    const tokenUrl="https://openapi.bradesco.com.br/v1/auth/token";
    const params=new URLSearchParams({grant_type:"client_credentials",client_id:process.env.BRADESCO_CLIENT_ID,client_secret:process.env.BRADESCO_CLIENT_SECRET});
    const tok=await axios.post(tokenUrl, params, {httpsAgent:agent, headers:{"Content-Type":"application/x-www-form-urlencoded"}});
    const access_token=tok.data.access_token;
-   console.log("Token Bradesco OK");
-
-   // Cria cobrança dinâmica
    const cobUrl=`https://openapi.bradesco.com.br/v2/cob/${txid}`;
    const cobBody={calendario:{expiracao:3600},valor:{original:valor},chave:chave,solicitacaoPagador:`DG Parcela ${parcela_id}`};
    const cob=await axios.put(cobUrl, cobBody, {httpsAgent:agent, headers:{Authorization:`Bearer ${access_token}`,"Content-Type":"application/json"}});
-   console.log("COB Criada",cob.data.txid);
-   return res.json({modo:"DINAMICO_OFICIAL_PEM",txid,parcela_id,valor,pixCopiaECola:cob.data.pixCopiaECola, loc:cob.data.loc});
+   return res.json({modo:"DINAMICO_OFICIAL_PEM",txid,parcela_id,valor,pixCopiaECola:cob.data.pixCopiaECola});
   }
  }catch(e){
-  console.error("Falha OFICIAL, caindo pro estático:", e.response?.data || e.message);
+  console.error("Falha OFICIAL:", e.response?.data || e.message);
  }
-
  const pix=gerarPixEstatico(valor,chave,txid);
  return res.json({modo:"ESTATICO_FALLBACK",txid,parcela_id,valor,pixCopiaECola:pix});
 });
@@ -61,4 +53,3 @@ app.get('/teste-pix',(req,res)=>{
 });
 
 app.listen(PORT,()=>console.log(`V11.3 PEM Rodando ${PORT}`));
-});

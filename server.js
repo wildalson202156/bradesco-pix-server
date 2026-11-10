@@ -1,127 +1,89 @@
 const express = require('express');
-const axios = require('axios');
-const https = require('https');
+const cors = require('cors');
+
 const app = express();
+
+// CORS CORRIGIDO - LIBERA TUDO
+app.use(cors({
+  origin: "*",
+  methods: ["GET","POST","OPTIONS"],
+  allowedHeaders: ["Content-Type","Authorization"]
+}));
+app.options("*", cors());
+
 app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
 
-const CERT = process.env.BRADESCO_CERT_PEM;
-const KEY = process.env.BRADESCO_KEY_PEM;
-const CLIENT_ID = process.env.BRADESCO_CLIENT_ID;
-const CLIENT_SECRET = process.env.BRADESCO_CLIENT_SECRET;
-const PIX_KEY = process.env.BRADESCO_PIX_KEY;
+app.get('/', (req,res)=>res.send('DG MOTOS PIX V10.1 CORS FIX ON'));
 
-const BASE_URL = 'https://qrpix.bradesco.com.br';
-
-function getAgent() {
-  if (!CERT || !KEY) throw new Error('Certificado não configurado');
-  return new https.Agent({
-    cert: CERT,
-    key: KEY,
-    rejectUnauthorized: true
-  });
+function crc16(str){
+  let crc = 0xFFFF;
+  for(let c of str){
+    crc ^= c.charCodeAt(0) << 8;
+    for(let i=0;i<8;i++){
+      if(crc & 0x8000) crc = (crc << 1) ^ 0x1021;
+      else crc <<= 1;
+    }
+    crc &= 0xFFFF;
+  }
+  return crc.toString(16).toUpperCase().padStart(4,'0');
+}
+function formatPixField(id, value){
+  const len = value.length.toString().padStart(2,'0');
+  return `${id}${len}${value}`;
 }
 
-async function getToken() {
-  const agent = getAgent();
-  const params = new URLSearchParams();
-  params.append('grant_type', 'client_credentials');
-  const resp = await axios.post(`${BASE_URL}/oauth/token`, params, {
-    httpsAgent: agent,
-    auth: { username: CLIENT_ID, password: CLIENT_SECRET },
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
-  });
-  return resp.data.access_token;
-}
+app.post('/gerar-pix', (req,res)=>{
+  try{
+    const valor = (req.body.valor?.original || req.body.valor || "10.00").toString();
+    const chave = (req.body.chave || process.env.BRADESCO_PIX_KEY || "34340333000181").trim();
+    const nome = "DG MOTOS";
+    const cidade = "SAO LUIS";
+    const parcelaId = req.body.parcela_id || "";
+    const txid = `DG${parcelaId || Date.now()}`.substring(0,25).replace(/[^A-Z0-9]/g,'');
 
-// TESTE: Página inicial pra você gerar QR Code
-app.get('/', (req, res) => {
+    let payload = '';
+    payload += formatPixField("00","01");
+    payload += formatPixField("26", formatPixField("00","BR.GOV.BCB.PIX") + formatPixField("01", chave));
+    payload += formatPixField("52","0000");
+    payload += formatPixField("53","986");
+    payload += formatPixField("54", valor);
+    payload += formatPixField("58","BR");
+    payload += formatPixField("59", nome);
+    payload += formatPixField("60", cidade);
+    payload += formatPixField("62", formatPixField("05", txid));
+    payload += "6304";
+    payload += crc16(payload);
+
+    res.json({ txid, parcela_id: parcelaId, pixCopiaECola: payload, valor, chave });
+  }catch(e){
+    res.status(500).json({ erro: String(e) });
+  }
+});
+
+// PÁGINA DE TESTE SEM CORS (mesma origem)
+app.get('/teste-pix', (req,res)=>{
   res.send(`
-    <h1>DG MOTOS - PIX Bradesco PROD V10</h1>
-    <p>Status: ${CERT ? 'Certificado OK' : 'SEM CERTIFICADO'}</p>
-    <p>Chave PIX: ${PIX_KEY ? PIX_KEY.substring(0,10)+'...' : 'não configurada'}</p>
-    <hr>
-    <h3>Gerar PIX com valor:</h3>
-    <form method="POST" action="/pix/criar">
-      Valor: <input name="valor" value="1.00" /> <br><br>
-      Nome Cliente: <input name="nome" value="Cliente Teste" /> <br><br>
-      <button type="submit">GERAR QR CODE REAL</button>
-    </form>
-    <hr>
-    <a href="/pix/registrar-webhook">Clique aqui para REGISTRAR WEBHOOK</a>
+    <html><body style="font-family:sans-serif;text-align:center;padding:20px">
+    <h2>DG MOTOS - V10.1 TESTE</h2>
+    <input id="valor" value="10.00" style="padding:8px" />
+    <button onclick="gerar()" style="padding:8px 16px;background:green;color:white;border:none;border-radius:6px">Gerar PIX</button>
+    <div id="out" style="margin-top:20px;word-break:break-all;background:#eee;padding:10px"></div>
+    <div id="qrcode" style="margin:20px auto;width:250px"></div>
+    <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+    <script>
+      async function gerar(){
+        const valor = document.getElementById('valor').value;
+        const r = await fetch('/gerar-pix', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({valor, parcela_id: Date.now()})});
+        const d = await r.json();
+        document.getElementById('out').innerText = d.pixCopiaECola;
+        document.getElementById('qrcode').innerHTML='';
+        new QRCode(document.getElementById('qrcode'), d.pixCopiaECola);
+      }
+    </script>
+    </body></html>
   `);
 });
 
-// CRIAR PIX COM VALOR
-app.post('/pix/criar', async (req, res) => {
-  try {
-    const valor = req.body.valor || req.query.valor || '1.00';
-    const nome = req.body.nome || 'DG Motos Cliente';
-    console.log(`Gerando PIX de R$ ${valor} para ${nome}`);
+app.post('/webhook/pix', (req,res)=>{ console.log("WEBHOOK:", req.body); res.send("OK"); });
 
-    const token = await getToken();
-    const agent = getAgent();
-    
-    const txid = 'DG' + Date.now().toString().slice(-26);
-    
-    const cob = {
-      calendario: { expiracao: 3600 },
-      devedor: { nome: nome.substring(0,100) },
-      valor: { original: parseFloat(valor).toFixed(2) },
-      chave: PIX_KEY,
-      solicitacaoPagador: `DG Motos - ${nome}`
-    };
-
-    const resp = await axios.put(`${BASE_URL}/v2/cob/${txid}`, cob, {
-      httpsAgent: agent,
-      headers: { Authorization: `Bearer ${token}` }
-    });
-
-    console.log('PIX criado:', resp.data.pixCopiaECola);
-    res.json({
-      sucesso: true,
-      txid: txid,
-      valor: valor,
-      copiaECola: resp.data.pixCopiaECola,
-      qrCodeBase64: resp.data.imagemQrcode || null,
-      dados: resp.data
-    });
-
-  } catch (e) {
-    console.error('ERRO AO CRIAR PIX:', e.response?.data || e.message);
-    res.status(500).json({ erro: e.response?.data || e.message });
-  }
-});
-
-// WEBHOOK - Recebe aviso de pagamento do Bradesco
-app.post('/pix/webhook', (req, res) => {
-  console.log('=== PIX PAGO! ===', JSON.stringify(req.body));
-  // AQUI VOCÊ COLOCA A BAIXA AUTOMÁTICA NO SEU SISTEMA DG MOTOS
-  res.sendStatus(200);
-});
-
-app.get('/pix/webhook', (req, res) => {
-  res.send('Webhook DG Motos ativo: https://bradesco-pix-server.onrender.com/pix/webhook');
-});
-
-// REGISTRAR WEBHOOK NO BRADESCO
-app.get('/pix/registrar-webhook', async (req, res) => {
-  try {
-    const token = await getToken();
-    const agent = getAgent();
-    const webhookUrl = 'https://bradesco-pix-server.onrender.com/pix/webhook';
-    
-    const resp = await axios.put(`${BASE_URL}/v2/webhook/${PIX_KEY}`, 
-      { webhookUrl: webhookUrl },
-      { httpsAgent: agent, headers: { Authorization: `Bearer ${token}` } }
-    );
-    console.log('Webhook registrado:', resp.data);
-    res.json({ sucesso: true, mensagem: 'Webhook registrado no Bradesco!', url: webhookUrl, retorno: resp.data });
-  } catch (e) {
-    console.error('ERRO WEBHOOK:', e.response?.data || e.message);
-    res.status(500).json({ erro: e.response?.data || e.message });
-  }
-});
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`DG MOTOS V10 PROD rodando na porta ${PORT}`));
+app.listen(process.env.PORT || 10000, ()=>console.log("V10.1 CORS FIX Rodando"));

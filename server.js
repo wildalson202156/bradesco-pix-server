@@ -34,9 +34,7 @@ function getCerts() {
 
 function getAgent() {
   const { publico, privado } = getCerts();
-  if (!publico || !privado) {
-    throw new Error("Certificados não configurados");
-  }
+  if (!publico || !privado) throw new Error("Certificados não configurados");
   return new https.Agent({
     cert: publico,
     key: privado,
@@ -45,10 +43,12 @@ function getAgent() {
 }
 
 async function getToken() {
-  console.log("Tentando TOKEN...");
+  console.log("Tentando TOKEN com escopo cobv...");
   const agent = getAgent();
   const params = new URLSearchParams();
   params.append('grant_type', 'client_credentials');
+  // CORREÇÃO DO ERRO 114 - ESCOPO INVALIDO
+  params.append('scope', 'cobv.write cobv.read cob.read cob.write pix.read qrpix.read');
 
   const res = await axios.post(
     `${process.env.BRADESCO_BASE_URL}/oauth/token`,
@@ -62,7 +62,7 @@ async function getToken() {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
     }
   );
-  console.log("TOKEN OK");
+  console.log("TOKEN OK - escopo:", res.data.scope);
   return res.data.access_token;
 }
 
@@ -74,32 +74,22 @@ app.get('/criar-cobv', async (req, res) => {
   try {
     const valor = (req.query.valor || "150.00").toString();
     const dias = parseInt(req.query.dias) || 3;
-
     const venc = new Date();
     venc.setDate(venc.getDate() + dias);
     const dataVenc = venc.toISOString().split('T')[0];
-
-    // TXID OBRIGATORIO PARA BRADESCO - 26 a 35 caracteres
     const txid = `DGM${Date.now()}${Math.floor(Math.random()*10000)}`.substring(0, 32);
-
     const token = await getToken();
     const agent = getAgent();
 
     const payload = {
-      calendario: {
-        dataDeVencimento: dataVenc,
-        validadeAposVencimento: 30
-      },
-      valor: {
-        original: valor
-      },
+      calendario: { dataDeVencimento: dataVenc, validadeAposVencimento: 30 },
+      valor: { original: valor },
       chave: process.env.BRADESCO_PIX_CHAVE,
       solicitacaoPagador: `DG MOTOS - Venc ${dataVenc}`
     };
 
     console.log("Enviando COBV com TXID:", txid);
 
-    // CORREÇÃO DO 405: AGORA É PUT
     const response = await axios.put(
       `${process.env.BRADESCO_BASE_URL}/v2/cobv/${txid}`,
       payload,

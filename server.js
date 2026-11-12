@@ -13,13 +13,11 @@ app.use((req, res, next) => {
 const PORT = process.env.PORT || 10000;
 
 function getCerts() {
-  // Suporta os 2 formatos: separado ou unico
   let publico = process.env.BRADESCO_CERT_PUBLICO;
   let privado = process.env.BRADESCO_CERT_PRIVADO;
 
-  // fallback se você usa ainda BRADESCO_CERT
-  if (!publico && process.env.BRADESCO_CERT) {
-    publico = process.env.BRADESCO_CERT.includes("BEGIN CERTIFICATE") ? process.env.BRADESCO_CERT : null;
+  if (!publico && process.env.BRADESCO_CERT && process.env.BRADESCO_CERT.includes("BEGIN CERTIFICATE")) {
+    publico = process.env.BRADESCO_CERT;
   }
   if (!privado) {
     if (process.env.BRADESCO_CERT && process.env.BRADESCO_CERT.includes("BEGIN PRIVATE KEY")) {
@@ -28,7 +26,6 @@ function getCerts() {
     if (process.env.BRADESCO_CERT_PRIVADO) privado = process.env.BRADESCO_CERT_PRIVADO;
   }
 
-  // Render salva com \n literal - corrige
   if (publico) publico = publico.replace(/\\n/g, '\n');
   if (privado) privado = privado.replace(/\\n/g, '\n');
 
@@ -38,7 +35,7 @@ function getCerts() {
 function getAgent() {
   const { publico, privado } = getCerts();
   if (!publico || !privado) {
-    throw new Error("Certificados não configurados no Environment");
+    throw new Error("Certificados não configurados");
   }
   return new https.Agent({
     cert: publico,
@@ -82,6 +79,9 @@ app.get('/criar-cobv', async (req, res) => {
     venc.setDate(venc.getDate() + dias);
     const dataVenc = venc.toISOString().split('T')[0];
 
+    // TXID OBRIGATORIO PARA BRADESCO - 26 a 35 caracteres
+    const txid = `DGM${Date.now()}${Math.floor(Math.random()*10000)}`.substring(0, 32);
+
     const token = await getToken();
     const agent = getAgent();
 
@@ -97,10 +97,11 @@ app.get('/criar-cobv', async (req, res) => {
       solicitacaoPagador: `DG MOTOS - Venc ${dataVenc}`
     };
 
-    console.log("Enviando COBV:", payload);
+    console.log("Enviando COBV com TXID:", txid);
 
-    const response = await axios.post(
-      `${process.env.BRADESCO_BASE_URL}/v2/cobv`,
+    // CORREÇÃO DO 405: AGORA É PUT
+    const response = await axios.put(
+      `${process.env.BRADESCO_BASE_URL}/v2/cobv/${txid}`,
       payload,
       {
         headers: { Authorization: `Bearer ${token}` },
@@ -113,9 +114,9 @@ app.get('/criar-cobv', async (req, res) => {
       tipo: "PIX DINAMICO COM VENCIMENTO",
       valor: valor,
       vencimento: dataVenc,
-      txid: response.data.txid,
+      txid: txid,
       pixCopiaECola: response.data.pixCopiaECola,
-      location: response.data.location,
+      location: response.data.loc?.location || response.data.location,
       dados: response.data
     });
 
@@ -126,13 +127,12 @@ app.get('/criar-cobv', async (req, res) => {
   }
 });
 
-// Rota compatível antiga
 app.get('/criar-pix', (req, res) => {
   res.redirect(`/criar-cobv?valor=${req.query.valor || '150.00'}&dias=3`);
 });
 
 app.post('/webhook', (req, res) => {
-  console.log("Webhook recebido:", req.body);
+  console.log("Webhook:", req.body);
   res.sendStatus(200);
 });
 

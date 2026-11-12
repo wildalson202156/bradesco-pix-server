@@ -1,21 +1,18 @@
 const express = require('express');
 const axios = require('axios');
 const https = require('https');
-const fs = require('fs');
 const app = express();
 app.use(express.json());
 
 const PORT = process.env.PORT || 10000;
 
-// Certificados vindo do Render Environment (cole o conteúdo)
-const cert = process.env.BRADESCO_CERT; // privado.pem
-const key = process.env.BRADESCO_KEY; // se separado, senão usa cert
-
-// Monta agent mTLS
 function getAgent() {
+  const certContent = process.env.BRADESCO_CERT || process.env.BRADESCO_CERT_CONTENT;
+  const keyContent = process.env.BRADESCO_KEY || process.env.BRADESCO_CERT;
+
   return new https.Agent({
-    cert: Buffer.from(process.env.BRADESCO_CERT_CONTENT || process.env.BRADESCO_CERT, 'utf-8'),
-    key: Buffer.from(process.env.BRADESCO_KEY_CONTENT || process.env.BRADESCO_CERT, 'utf-8'),
+    cert: certContent,
+    key: keyContent,
     rejectUnauthorized: false
   });
 }
@@ -24,10 +21,10 @@ async function getToken() {
   console.log("Tentando TOKEN com mTLS...");
   const agent = getAgent();
   const url = `${process.env.BRADESCO_BASE_URL}/oauth/token`;
-  
+
   const params = new URLSearchParams();
   params.append('grant_type', 'client_credentials');
-  
+
   const res = await axios.post(url, params, {
     httpsAgent: agent,
     auth: {
@@ -40,15 +37,14 @@ async function getToken() {
   return res.data.access_token;
 }
 
-// ROTA QUE ESTAVA FALTANDO - PIX COM VENCIMENTO DINÂMICO PARAMETRIZADO
+// ROTA PIX COM VENCIMENTO DINAMICO PARAMETRIZADO
 app.get('/criar-cobv', async (req, res) => {
   try {
     const valor = req.query.valor || "150.00";
     const dias = parseInt(req.query.dias) || 3;
-
     const venc = new Date();
     venc.setDate(venc.getDate() + dias);
-    const dataVenc = venc.toISOString().split('T')[0]; // YYYY-MM-DD
+    const dataVenc = venc.toISOString().split('T')[0];
 
     console.log(`Criando COBV DINAMICO R$ ${valor} Venc: ${dataVenc}`);
 
@@ -56,31 +52,18 @@ app.get('/criar-cobv', async (req, res) => {
     const agent = getAgent();
 
     const payload = {
-      calendario: {
-        dataDeVencimento: dataVenc,
-        validadeAposVencimento: 30
-      },
-      valor: {
-        original: valor.toString()
-      },
+      calendario: { dataDeVencimento: dataVenc, validadeAposVencimento: 30 },
+      valor: { original: valor.toString() },
       chave: process.env.BRADESCO_PIX_CHAVE,
-      solicitacaoPagador: `DG MOTOS LTDA - Venc ${dataVenc}`,
-      infoAdicionais: [
-        { nome: "Loja", valor: "DG Motos" },
-        { nome: "Vencimento", valor: dataVenc }
-      ]
+      solicitacaoPagador: `DG MOTOS LTDA - Venc ${dataVenc}`
     };
 
     const response = await axios.post(
       `${process.env.BRADESCO_BASE_URL}/v2/cobv`,
       payload,
-      {
-        headers: { Authorization: `Bearer ${token}` },
-        httpsAgent: agent
-      }
+      { headers: { Authorization: `Bearer ${token}` }, httpsAgent: agent }
     );
 
-    // Retorna com QR Code dinâmico
     res.json({
       success: true,
       tipo: "PIX DINAMICO COM VENCIMENTO",
@@ -99,5 +82,4 @@ app.get('/criar-cobv', async (req, res) => {
 });
 
 app.get('/', (req, res) => res.send('DG MOTOS - PIX COM VENCIMENTO DINAMICO ONLINE'));
-
 app.listen(PORT, () => console.log(`Rodando ${PORT}`));

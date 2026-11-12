@@ -120,7 +120,8 @@ app.get('/criar-cobv', async (req, res) => {
     });
 
   } catch (e) {
-    console.error("ERRO COBV:", e.response?.data || e.message);
+    console.error("ERRO COBV COMPLETO:", JSON.stringify(e.response?.data || e.message, null, 2));
+    console.error("STATUS:", e.response?.status);
     res.status(500).json(e.response?.data || { erro: e.message });
   }
 });

@@ -6,7 +6,7 @@ app.use(express.json());
 
 const CLIENT_ID = process.env.BRADESCO_CLIENT_ID;
 const CLIENT_SECRET = process.env.BRADESCO_CLIENT_SECRET;
-const PIX_CHAVE = process.env.BRADESCO_PIX_CHAVE;
+const PIX_CHAVE = process.env.BRADESCO_PIX_CHAVE || '34340333000181';
 const CERT_PRIVADO = process.env.BRADESCO_CERT_PRIVADO;
 const CERT_PUBLICO = process.env.BRADESCO_CERT_PUBLICO;
 
@@ -31,9 +31,16 @@ async function getToken() {
   return res.data.access_token;
 }
 
+app.get('/', (req, res) => {
+  res.send('PIX EMV DG MOTOS ONLINE - V2/COB');
+});
+
 app.post('/gerar-pix', async (req, res) => {
   try {
     const { valor, txid, cliente } = req.body;
+    if (!valor || !txid) {
+      return res.status(400).json({ erro: 'valor e txid obrigatorios' });
+    }
     const token = await getToken();
     const cob = await axios.put(`https://api.bradesco.com.br/v2/cob/${txid}`, {
         calendario: { expiracao: 86400 },
@@ -47,22 +54,18 @@ app.post('/gerar-pix', async (req, res) => {
       });
     res.json(cob.data);
   } catch (e) {
-    console.log(e.response?.data || e.message);
-    res.status(500).json(e.response?.data || e.message);
+    console.log('ERRO GERAR PIX:', e.response?.data || e.message);
+    res.status(500).json(e.response?.data || { mensagem: e.message });
   }
 });
 
-app.post('/webhook/bradesco', (req,res)=>{
-  console.log('PIX PAGO:', JSON.stringify(req.body));
-  res.sendStatus(200);
-});
-
-// ROTA DE TESTE FACIL - so abrir no navegador
+// ROTA DE TESTE FACIL - abre no navegador
 app.get('/teste', async (req, res) => {
   const valor = req.query.valor || 700;
-  const txid = `DGMOTOS${Date.now()}`.substring(0,35);
+  const txid = `DGMOTOS${Date.now()}TESTE`.substring(0, 35);
   try {
     const token = await getToken();
+    console.log('TOKEN OK, gerando cob', txid);
     const cob = await axios.put(`https://api.bradesco.com.br/v2/cob/${txid}`, {
         calendario: { expiracao: 86400 },
         devedor: { nome: 'CLIENTE TESTE DG' },
@@ -75,14 +78,21 @@ app.get('/teste', async (req, res) => {
       });
     res.json({
       sucesso: true,
+      mensagem: 'PIX GERADO COM SUCESSO',
       valor: valor,
       txid: txid,
       copiaECola: cob.data.pixCopiaECola || cob.data.emv,
-      dados: cob.data
+      dados_completos: cob.data
     });
   } catch (e) {
-    res.status(500).json(e.response?.data || e.message);
+    console.log('ERRO TESTE:', e.response?.data || e.message);
+    res.status(500).json({ erro: e.response?.data || e.message });
   }
 });
 
-app.listen(10000, ()=> console.log('ONLINE'));
+app.post('/webhook/bradesco', (req, res) => {
+  console.log('*** PIX PAGO RECEBIDO ***', JSON.stringify(req.body));
+  res.sendStatus(200);
+});
+
+app.listen(10000, () => console.log('ONLINE - PIX EMV DG MOTOS - V2/COB'));

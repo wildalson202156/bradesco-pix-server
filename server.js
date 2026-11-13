@@ -5,9 +5,8 @@ const https = require('https');
 const app = express();
 app.use(express.json());
 
-// COLOCA AQUI SUA CREDENCIAL NOVA DO EMV
-const CLIENT_ID = 'SEU_CLIENT_ID_NOVO_DO_EMV';
-const CLIENT_SECRET = 'SEU_CLIENT_SECRET_NOVO_DO_EMV';
+const CLIENT_ID = '4b0cc39d-8e07-4c6b-9170-30fb1faa57c5';
+const CLIENT_SECRET = 'f01f46db-1646-4ea7-9038-f7c4b895cc6d';
 
 async function getToken() {
   const res = await axios.post(
@@ -31,7 +30,7 @@ app.post('/gerar-pix', async (req, res) => {
     const { valor, txid, cliente } = req.body;
     const token = await getToken();
     
-    console.log('TOKEN OK, gerando COB...');
+    console.log('TOKEN OK');
 
     const cob = await axios.put(`https://api.bradesco.com.br/v2/cob/${txid}`, {
         calendario: { expiracao: 86400 },
@@ -48,7 +47,7 @@ app.post('/gerar-pix', async (req, res) => {
         })
       });
     
-    console.log('PIX EMV GERADO:', cob.data.txid);
+    console.log('PIX GERADO:', cob.data.txid);
     res.json(cob.data);
 
   } catch (e) {
@@ -58,8 +57,11 @@ app.post('/gerar-pix', async (req, res) => {
 });
 
 app.post('/webhook/bradesco', (req, res) => {
-  console.log('PIX PAGO:', JSON.stringify(req.body));
+  console.log('PIX PAGO RECEBIDO:', JSON.stringify(req.body));
+  // AQUI ENTRA A BAIXA AUTOMATICA NO SEU SISTEMA DG
   res.sendStatus(200);
 });
+
+app.get('/', (req,res)=> res.send('PIX EMV DG MOTOS ONLINE'));
 
 app.listen(10000, () => console.log('Rodando 10000 - PIX EMV OK'));

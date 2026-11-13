@@ -57,6 +57,32 @@ app.post('/webhook/bradesco', (req,res)=>{
   res.sendStatus(200);
 });
 
-app.get('/', (req,res)=> res.send('PIX EMV DG MOTOS ONLINE - V2/COB'));
+// ROTA DE TESTE FACIL - so abrir no navegador
+app.get('/teste', async (req, res) => {
+  const valor = req.query.valor || 700;
+  const txid = `DGMOTOS${Date.now()}`.substring(0,35);
+  try {
+    const token = await getToken();
+    const cob = await axios.put(`https://api.bradesco.com.br/v2/cob/${txid}`, {
+        calendario: { expiracao: 86400 },
+        devedor: { nome: 'CLIENTE TESTE DG' },
+        valor: { original: Number(valor).toFixed(2) },
+        chave: PIX_CHAVE,
+        solicitacaoPagador: `DG MOTOS - R$ ${valor}`
+      }, {
+        headers: { Authorization: `Bearer ${token}` },
+        httpsAgent: getAgent()
+      });
+    res.json({
+      sucesso: true,
+      valor: valor,
+      txid: txid,
+      copiaECola: cob.data.pixCopiaECola || cob.data.emv,
+      dados: cob.data
+    });
+  } catch (e) {
+    res.status(500).json(e.response?.data || e.message);
+  }
+});
 
 app.listen(10000, ()=> console.log('ONLINE'));

@@ -11,10 +11,16 @@ const CERT_PRIVADO = process.env.BRADESCO_CERT_PRIVADO;
 const CERT_PUBLICO = process.env.BRADESCO_CERT_PUBLICO;
 
 function getAgent() {
+  // CORRECAO PARA QUEBRA DE LINHA DO RENDER
+  const certPublico = (CERT_PUBLICO || '').replace(/\\n/g, '\n');
+  const certPrivado = (CERT_PRIVADO || '').replace(/\\n/g, '\n');
+  
   return new https.Agent({
-    cert: CERT_PUBLICO,
-    key: CERT_PRIVADO,
-    rejectUnauthorized: false
+    cert: certPublico,
+    key: certPrivado,
+    rejectUnauthorized: false,
+    keepAlive: true,
+    timeout: 20000
   });
 }
 
@@ -25,7 +31,8 @@ async function getToken() {
     {
       auth: { username: CLIENT_ID, password: CLIENT_SECRET },
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      httpsAgent: getAgent()
+      httpsAgent: getAgent(),
+      timeout: 20000
     }
   );
   return res.data.access_token;
@@ -50,7 +57,8 @@ app.post('/gerar-pix', async (req, res) => {
         solicitacaoPagador: `DG MOTOS - R$ ${valor}`
       }, {
         headers: { Authorization: `Bearer ${token}` },
-        httpsAgent: getAgent()
+        httpsAgent: getAgent(),
+        timeout: 20000
       });
     res.json(cob.data);
   } catch (e) {
@@ -59,7 +67,6 @@ app.post('/gerar-pix', async (req, res) => {
   }
 });
 
-// ROTA DE TESTE FACIL - abre no navegador
 app.get('/teste', async (req, res) => {
   const valor = req.query.valor || 700;
   const txid = `DGMOTOS${Date.now()}TESTE`.substring(0, 35);
@@ -74,19 +81,24 @@ app.get('/teste', async (req, res) => {
         solicitacaoPagador: `DG MOTOS - R$ ${valor}`
       }, {
         headers: { Authorization: `Bearer ${token}` },
-        httpsAgent: getAgent()
+        httpsAgent: getAgent(),
+        timeout: 20000
       });
     res.json({
       sucesso: true,
       mensagem: 'PIX GERADO COM SUCESSO',
       valor: valor,
       txid: txid,
-      copiaECola: cob.data.pixCopiaECola || cob.data.emv,
+      copiaECola: cob.data.pixCopiaECola || cob.data.emv || cob.data.textoImagemQRcode,
       dados_completos: cob.data
     });
   } catch (e) {
     console.log('ERRO TESTE:', e.response?.data || e.message);
-    res.status(500).json({ erro: e.response?.data || e.message });
+    res.status(500).json({ 
+      erro: 'FALHA AO CONECTAR BRADESCO',
+      detalhe: e.response?.data || e.message,
+      codigo: e.code
+    });
   }
 });
 
@@ -95,4 +107,5 @@ app.post('/webhook/bradesco', (req, res) => {
   res.sendStatus(200);
 });
 
-app.listen(10000, () => console.log('ONLINE - PIX EMV DG MOTOS - V2/COB'));
+const PORT = process.env.PORT || 10000;
+app.listen(PORT, () => console.log(`ONLINE - PIX EMV DG MOTOS - V2/COB NA PORTA ${PORT}`));

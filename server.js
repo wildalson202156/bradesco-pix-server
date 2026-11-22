@@ -2,6 +2,7 @@ const express = require('express');
 const axios = require('axios');
 const https = require('https');
 const cors = require('cors');
+const crypto = require('crypto');
 
 const app = express();
 app.use(cors());
@@ -13,18 +14,23 @@ const TOKEN_URL_ENV = process.env.BRADESCO_TOKEN_URL || 'https://openapi.bradesc
 const COBV_URL = process.env.BRADESCO_COBV_URL || 'https://openapi.bradesco.com.br/pix/v1/cobv';
 const CHAVE_PIX = process.env.BRADESCO_CHAVE_PIX || process.env.BRADESCO_PIX_CHAVE;
 
-function getAgent() {
+function getCertKey() {
   let cert = process.env.BRADESCO_CERT_PEM || '';
   let key = process.env.BRADESCO_KEY_PEM || '';
   if (cert) cert = cert.replace(/\\n/g, '\n').trim();
   if (key) key = key.replace(/\\n/g, '\n').trim();
+  return { cert, key };
+}
+
+function getAgent() {
+  const { cert, key } = getCertKey();
   return new https.Agent({ cert, key, rejectUnauthorized: true });
 }
 
 async function getToken() {
   const agent = getAgent();
   const basic = Buffer.from(`${CLIENT_ID}:${CLIENT_SECRET}`).toString('base64');
-  const urls = [TOKEN_URL_ENV, 'https://openapi.bradesco.com.br/oauth/token', 'https://openapi.bradesco.com.br/oauth/v1/token'];
+  const urls = [TOKEN_URL_ENV, 'https://openapi.bradesco.com.br/oauth/token'];
   const unicas = [...new Set(urls)];
   console.log('TOKEN_URL DO RENDER:', TOKEN_URL_ENV);
   let ultimoErro = null;
@@ -45,9 +51,6 @@ async function getToken() {
       ultimoErro = e;
     }
   }
-  console.log('TOKEN STATUS:', ultimoErro?.response?.status);
-  console.log('TOKEN ERRO:', JSON.stringify(ultimoErro?.response?.data));
-  console.log('TOKEN MSG:', ultimoErro?.message);
   throw ultimoErro;
 }
 
@@ -75,6 +78,32 @@ function gerarEMV(chave, txid, valor, nome, cidade) {
 
 app.get('/', (req, res) => {
   res.send('Bradesco Pix Server OK');
+});
+
+app.get('/debug', (req, res) => {
+  const { cert, key } = getCertKey();
+  let certInfo = 'SEM CERT';
+  try {
+    if (cert) {
+      const x = new crypto.X509Certificate(cert);
+      certInfo = 'Valido de ' + x.validFrom + ' ate ' + x.validTo + ' | Subject: ' + x.subject;
+    }
+  } catch (e) { certInfo = 'CERT QUEBRADO: ' + e.message; }
+  res.json({
+    tokenUrl: TOKEN_URL_ENV,
+    cobvUrl: COBV_URL,
+    temClientId: !!CLIENT_ID,
+    clientIdInicio: CLIENT_ID ? CLIENT_ID.substring(0, 4) + '...' : null,
+    temSecret: !!CLIENT_SECRET,
+    temChavePix: !!CHAVE_PIX,
+    chavePix: CHAVE_PIX || null,
+    certComecaCom: cert ? cert.substring(0, 30) : null,
+    certTerminaCom: cert ? cert.substring(cert.length - 30) : null,
+    keyComecaCom: key ? key.substring(0, 30) : null,
+    certInfo,
+    certTamanho: cert.length,
+    keyTamanho: key.length
+  });
 });
 
 app.get('/pagamento', (req, res) => {
@@ -116,54 +145,30 @@ app.post('/gerar-pix', async (req, res) => {
   try {
     const { valor, nome, cpf } = req.body;
     if (!valor) return res.status(400).json({ erro: 'Valor obrigatorio' });
-
     const token = await getToken();
     const agent = getAgent();
-
     const txid = 'BRAD' + Date.now().toString().slice(-12) + Math.floor(Math.random() * 1000).toString().padStart(3, '0');
     const valorFormatado = Number(valor).toFixed(2);
-
     const body = {
       calendario: { expiracao: 3600 },
-      devedor: {
-        cpf: String(cpf || '00000000000').replace(/\D/g, ''),
-        nome: nome || 'Cliente'
-      },
+      devedor: { cpf: String(cpf || '00000000000').replace(/\D/g, ''), nome: nome || 'Cliente' },
       valor: { original: valorFormatado },
       chave: CHAVE_PIX,
       solicitacaoPagador: 'Pagamento via Pix'
     };
-
     console.log('ENVIANDO COBV TXID:', txid, 'VALOR:', valorFormatado);
-
     const cobv = await axios.put(`${COBV_URL}/${txid}`, body, {
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        'Content-Type': 'application/json'
-      },
+      headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
       httpsAgent: agent
     });
-
     const location = cobv.data?.loc?.location || cobv.data?.location || '';
     const emv = gerarEMV(CHAVE_PIX, txid, valorFormatado, 'SUA EMPRESA', 'SAO LUIS');
-
-    res.json({
-      txid,
-      copiaCola: emv,
-      qrCodeUrl: location,
-      valor: valorFormatado,
-      status: cobv.data?.status || 'ATIVA'
-    });
-
+    res.json({ txid, copiaCola: emv, qrCodeUrl: location, valor: valorFormatado, status: cobv.data?.status || 'ATIVA' });
   } catch (err) {
     console.log('ERRO COBV STATUS:', err.response?.status);
     console.log('ERRO COBV DATA:', JSON.stringify(err.response?.data));
     console.log('ERRO COBV MSG:', err.message);
-    res.status(err.response?.status || 500).json({
-      erro: 'Falha ao gerar Pix',
-      status: err.response?.status,
-      detalhe: err.response?.data || err.message
-    });
+    res.status(err.response?.status || 500).json({ erro: 'Falha ao gerar Pix', status: err.response?.status, detalhe: err.response?.data || err.message });
   }
 });
 

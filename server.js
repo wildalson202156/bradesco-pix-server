@@ -1,6 +1,7 @@
 const express = require('express');
 const axios = require('axios');
 const https = require('https');
+const fs = require('fs');
 const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -22,9 +23,9 @@ app.post('/gerar-pix', async (req, res) => {
     const valor = req.body.valor;
     const nome = req.body.nomeCliente;
 
-    // Decodifica o certificado que está no Render
-    const cert = Buffer.from(process.env.BRADESCO_CERT_BASE64, 'base64');
-    const key = Buffer.from(process.env.BRADESCO_KEY_BASE64, 'base64');
+    // Lê do Secret Files do Render - NÃO usa mais BASE64
+    const cert = fs.readFileSync('/etc/secrets/cert.pem');
+    const key = fs.readFileSync('/etc/secrets/key.pem');
     const agent = new https.Agent({ cert, key, rejectUnauthorized: false });
 
     const auth = Buffer.from(process.env.BRADESCO_CLIENT_ID + ':' + process.env.BRADESCO_CLIENT_SECRET).toString('base64');

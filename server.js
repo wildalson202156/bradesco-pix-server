@@ -67,6 +67,41 @@ app.get('/', (req, res) => {
   res.send('Bradesco Pix Server OK');
 });
 
+app.get('/pagamento', (req, res) => {
+  res.send(`<!DOCTYPE html>
+<html lang="pt-BR">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Pagamento Pix</title>
+<style>body{font-family:Arial,sans-serif;background:#f2f2f2;display:flex;justify-content:center;padding:20px} .card{background:#fff;padding:24px;border-radius:12px;width:100%;max-width:400px;box-shadow:0 4px 20px rgba(0,0,0,.1)} h2{text-align:center} label{display:block;margin-top:12px;font-weight:bold} input{width:100%;padding:12px;margin-top:6px;border:1px solid #ccc;border-radius:8px;box-sizing:border-box} button{width:100%;padding:14px;margin-top:18px;background:#cc0000;color:#fff;border:none;border-radius:8px;font-size:16px;font-weight:bold;cursor:pointer} #resultado{margin-top:20px;display:none} textarea{width:100%;height:110px;padding:10px;box-sizing:border-box} .copiar{background:#000;margin-top:8px}</style>
+</head>
+<body><div class="card"><h2>Pagamento via Pix</h2>
+<label>Nome</label><input id="nome" placeholder="Seu nome">
+<label>CPF</label><input id="cpf" placeholder="Somente numeros">
+<label>Valor R$</label><input id="valor" type="number" step="0.01" placeholder="Ex: 10.00" value="1.00">
+<button onclick="gerar()">GERAR PIX</button>
+<div id="resultado"><p><b>Pix gerado! Copie abaixo:</b></p><textarea id="copia" readonly></textarea><button class="copiar" onclick="copiar()">COPIAR CODIGO</button><p id="txid"></p></div>
+<p id="msg" style="color:red;text-align:center"></p>
+</div>
+<script>
+async function gerar(){
+  const nome=document.getElementById('nome').value;
+  const cpf=document.getElementById('cpf').value;
+  const valor=document.getElementById('valor').value;
+  document.getElementById('msg').innerText='Gerando... aguarde';
+  try{
+    const r=await fetch('/gerar-pix',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({nome,cpf,valor})});
+    const d=await r.json();
+    if(d.copiaCola){
+      document.getElementById('resultado').style.display='block';
+      document.getElementById('copia').value=d.copiaCola;
+      document.getElementById('txid').innerText='TXID: '+d.txid;
+      document.getElementById('msg').innerText='Pronto!';
+    } else { document.getElementById('msg').innerText='Erro: '+(d.detalhe ? JSON.stringify(d.detalhe) : d.erro); }
+  }catch(e){ document.getElementById('msg').innerText='Erro ao gerar: '+e.message; }
+}
+function copiar(){ const t=document.getElementById('copia'); t.select(); document.execCommand('copy'); alert('Copiado!'); }
+</script></body></html>`);
+});
+
 app.post('/gerar-pix', async (req, res) => {
   try {
     const { valor, nome, cpf } = req.body;

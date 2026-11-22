@@ -99,7 +99,9 @@ app.post('/gerar-pix', async (req, res) => {
       <br><br><a href="/">Gerar outro</a> | <a href="/consultar?txid=${txidFinal}">Ver se pagou</a>
     `);
   } catch (err) {
-    console.log('ERRO COBV:', err.response?.data || err.message);
+   console.log('ERRO COBV STATUS:', err.response?.status);
+console.log('ERRO COBV DATA:', JSON.stringify(err.response?.data));
+console.log('ERRO COBV MSG:', err.message);
     res.send(`<h2>Erro ao gerar</h2><pre>${JSON.stringify(err.response?.data || err.message, null, 2)}</pre><br><a href="/">Voltar</a>`);
   }
 });

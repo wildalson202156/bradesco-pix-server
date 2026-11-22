@@ -9,7 +9,7 @@ app.use(express.json());
 
 const CLIENT_ID = process.env.BRADESCO_CLIENT_ID;
 const CLIENT_SECRET = process.env.BRADESCO_CLIENT_SECRET;
-const TOKEN_URL = process.env.BRADESCO_TOKEN_URL || 'https://openapi.bradesco.com.br/oauth/token';
+const TOKEN_URL_ENV = process.env.BRADESCO_TOKEN_URL || 'https://openapi.bradesco.com.br/oauth/token';
 const COBV_URL = process.env.BRADESCO_COBV_URL || 'https://openapi.bradesco.com.br/pix/v1/cobv';
 const CHAVE_PIX = process.env.BRADESCO_CHAVE_PIX || process.env.BRADESCO_PIX_CHAVE;
 
@@ -24,21 +24,31 @@ function getAgent() {
 async function getToken() {
   const agent = getAgent();
   const basic = Buffer.from(`${CLIENT_ID}:${CLIENT_SECRET}`).toString('base64');
-  try {
-    const res = await axios.post(TOKEN_URL, new URLSearchParams({ grant_type: 'client_credentials' }).toString(), {
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'Authorization': `Basic ${basic}`
-      },
-      httpsAgent: agent
-    });
-    return res.data.access_token;
-  } catch (e) {
-    console.log('TOKEN STATUS:', e.response?.status);
-    console.log('TOKEN ERRO:', JSON.stringify(e.response?.data));
-    console.log('TOKEN MSG:', e.message);
-    throw e;
+  const urls = [TOKEN_URL_ENV, 'https://openapi.bradesco.com.br/oauth/token', 'https://openapi.bradesco.com.br/oauth/v1/token'];
+  const unicas = [...new Set(urls)];
+  console.log('TOKEN_URL DO RENDER:', TOKEN_URL_ENV);
+  let ultimoErro = null;
+  for (const url of unicas) {
+    try {
+      console.log('TENTANDO TOKEN EM:', url);
+      const res = await axios.post(url, new URLSearchParams({ grant_type: 'client_credentials' }).toString(), {
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'Authorization': `Basic ${basic}`
+        },
+        httpsAgent: agent
+      });
+      console.log('TOKEN OK EM:', url);
+      return res.data.access_token;
+    } catch (e) {
+      console.log('TOKEN FALHOU EM:', url, 'STATUS:', e.response?.status, 'DATA:', JSON.stringify(e.response?.data));
+      ultimoErro = e;
+    }
   }
+  console.log('TOKEN STATUS:', ultimoErro?.response?.status);
+  console.log('TOKEN ERRO:', JSON.stringify(ultimoErro?.response?.data));
+  console.log('TOKEN MSG:', ultimoErro?.message);
+  throw ultimoErro;
 }
 
 function crc16(str) {

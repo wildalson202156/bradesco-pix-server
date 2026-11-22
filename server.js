@@ -17,7 +17,11 @@ const CHAVE_PIX = process.env.BRADESCO_CHAVE_PIX || process.env.BRADESCO_PIX_CHA
 function getCertKey() {
   let cert = process.env.BRADESCO_CERT_PEM || '';
   let key = process.env.BRADESCO_KEY_PEM || '';
-  if (cert) cert = cert.replace(/\\n/g, '\n').trim();
+  if (cert) {
+    cert = cert.replace(/\\n/g, '\n').trim();
+    cert = cert.replace(/CERTIFICADO/g, 'CERTIFICATE');
+    cert = cert.replace(/-----BEGIN CERTIFICATE-----/, '-----BEGIN CERTIFICATE-----');
+  }
   if (key) key = key.replace(/\\n/g, '\n').trim();
   return { cert, key };
 }
@@ -28,30 +32,23 @@ function getAgent() {
 }
 
 async function getToken() {
-  const agent = getAgent();
   const basic = Buffer.from(`${CLIENT_ID}:${CLIENT_SECRET}`).toString('base64');
-  const urls = [TOKEN_URL_ENV, 'https://openapi.bradesco.com.br/oauth/token'];
-  const unicas = [...new Set(urls)];
-  console.log('TOKEN_URL DO RENDER:', TOKEN_URL_ENV);
-  let ultimoErro = null;
-  for (const url of unicas) {
-    try {
-      console.log('TENTANDO TOKEN EM:', url);
-      const res = await axios.post(url, new URLSearchParams({ grant_type: 'client_credentials' }).toString(), {
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-          'Authorization': `Basic ${basic}`
-        },
-        httpsAgent: agent
-      });
-      console.log('TOKEN OK EM:', url);
-      return res.data.access_token;
-    } catch (e) {
-      console.log('TOKEN FALHOU EM:', url, 'STATUS:', e.response?.status, 'DATA:', JSON.stringify(e.response?.data));
-      ultimoErro = e;
-    }
+  const url = TOKEN_URL_ENV;
+  console.log('TOKEN_URL DO RENDER:', url);
+  try {
+    console.log('TENTANDO TOKEN EM:', url);
+    const res = await axios.post(url, new URLSearchParams({ grant_type: 'client_credentials' }).toString(), {
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Authorization': `Basic ${basic}`
+      }
+    });
+    console.log('TOKEN OK EM:', url);
+    return res.data.access_token;
+  } catch (e) {
+    console.log('TOKEN FALHOU EM:', url, 'STATUS:', e.response?.status, 'DATA:', JSON.stringify(e.response?.data));
+    throw e;
   }
-  throw ultimoErro;
 }
 
 function crc16(str) {
@@ -97,9 +94,8 @@ app.get('/debug', (req, res) => {
     temSecret: !!CLIENT_SECRET,
     temChavePix: !!CHAVE_PIX,
     chavePix: CHAVE_PIX || null,
-    certComecaCom: cert ? cert.substring(0, 30) : null,
-    certTerminaCom: cert ? cert.substring(cert.length - 30) : null,
-    keyComecaCom: key ? key.substring(0, 30) : null,
+    certComecaCom: cert ? cert.substring(0, 35) : null,
+    certTerminaCom: cert ? cert.substring(cert.length - 35) : null,
     certInfo,
     certTamanho: cert.length,
     keyTamanho: key.length

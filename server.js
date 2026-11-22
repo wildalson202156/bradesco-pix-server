@@ -20,7 +20,6 @@ function getCertKey() {
   if (cert) {
     cert = cert.replace(/\\n/g, '\n').trim();
     cert = cert.replace(/CERTIFICADO/g, 'CERTIFICATE');
-    cert = cert.replace(/-----BEGIN CERTIFICATE-----/, '-----BEGIN CERTIFICATE-----');
   }
   if (key) key = key.replace(/\\n/g, '\n').trim();
   return { cert, key };
@@ -33,22 +32,27 @@ function getAgent() {
 
 async function getToken() {
   const basic = Buffer.from(`${CLIENT_ID}:${CLIENT_SECRET}`).toString('base64');
-  const url = TOKEN_URL_ENV;
-  console.log('TOKEN_URL DO RENDER:', url);
-  try {
-    console.log('TENTANDO TOKEN EM:', url);
-    const res = await axios.post(url, new URLSearchParams({ grant_type: 'client_credentials' }).toString(), {
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'Authorization': `Basic ${basic}`
-      }
-    });
-    console.log('TOKEN OK EM:', url);
-    return res.data.access_token;
-  } catch (e) {
-    console.log('TOKEN FALHOU EM:', url, 'STATUS:', e.response?.status, 'DATA:', JSON.stringify(e.response?.data));
-    throw e;
+  const tentativas = [
+    { nome: 'PROD + Basic', url: 'https://openapi.bradesco.com.br/oauth/token', body: 'grant_type=client_credentials', headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Authorization': `Basic ${basic}` } },
+    { nome: 'PROD + Body client_id', url: 'https://openapi.bradesco.com.br/oauth/token', body: `grant_type=client_credentials&client_id=${CLIENT_ID}&client_secret=${CLIENT_SECRET}`, headers: { 'Content-Type': 'application/x-www-form-urlencoded' } },
+    { nome: 'SANDBOX + Basic', url: 'https://proxy.api.bradesco.com.br/oauth/token', body: 'grant_type=client_credentials', headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Authorization': `Basic ${basic}` } },
+    { nome: 'ENV + Basic', url: TOKEN_URL_ENV, body: 'grant_type=client_credentials', headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Authorization': `Basic ${basic}` } }
+  ];
+  console.log('TOKEN_URL DO RENDER:', TOKEN_URL_ENV);
+  console.log('CLIENT_ID INICIO:', CLIENT_ID ? CLIENT_ID.substring(0, 4) : 'SEM ID');
+  let ultimoErro = null;
+  for (const t of tentativas) {
+    try {
+      console.log('TENTANDO:', t.nome, t.url);
+      const res = await axios.post(t.url, t.body, { headers: t.headers, timeout: 15000 });
+      console.log('TOKEN OK EM:', t.nome);
+      return res.data.access_token;
+    } catch (e) {
+      console.log('FALHOU:', t.nome, 'STATUS:', e.response?.status, 'DATA:', JSON.stringify(e.response?.data)?.substring(0, 300));
+      ultimoErro = e;
+    }
   }
+  throw ultimoErro;
 }
 
 function crc16(str) {
@@ -95,7 +99,6 @@ app.get('/debug', (req, res) => {
     temChavePix: !!CHAVE_PIX,
     chavePix: CHAVE_PIX || null,
     certComecaCom: cert ? cert.substring(0, 35) : null,
-    certTerminaCom: cert ? cert.substring(cert.length - 35) : null,
     certInfo,
     certTamanho: cert.length,
     keyTamanho: key.length

@@ -23,9 +23,15 @@ app.post('/gerar-pix', async (req, res) => {
     const valor = req.body.valor;
     const nome = req.body.nomeCliente;
 
-    // Lê do Secret Files do Render - NÃO usa mais BASE64
-    const cert = fs.readFileSync('/etc/secrets/cert.pem');
-    const key = fs.readFileSync('/etc/secrets/key.pem');
+    // Tenta achar o certificado: 1º Secret File, 2º arquivo na pasta
+    let cert, key;
+    if (fs.existsSync('/etc/secrets/cert.pem')) {
+      cert = fs.readFileSync('/etc/secrets/cert.pem');
+      key = fs.readFileSync('/etc/secrets/key.pem');
+    } else {
+      cert = fs.readFileSync('./cert.pem');
+      key = fs.readFileSync('./key.pem');
+    }
     const agent = new https.Agent({ cert, key, rejectUnauthorized: false });
 
     const auth = Buffer.from(process.env.BRADESCO_CLIENT_ID + ':' + process.env.BRADESCO_CLIENT_SECRET).toString('base64');

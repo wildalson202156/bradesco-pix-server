@@ -27,13 +27,14 @@ function getAgent() {
 async function getToken() {
   const agent = getAgent();
   const basic = Buffer.from(`${CLIENT_ID}:${CLIENT_SECRET}`).toString('base64');
-  const res = await axios.post(TOKEN_URL, 'grant_type=client_credentials&scope=cobv.write cobv.read pix.read', {
+  const params = new URLSearchParams();
+  params.append('grant_type', 'client_credentials');
+  const res = await axios.post(TOKEN_URL, params.toString(), {
     headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Authorization': `Basic ${basic}` },
     httpsAgent: agent
   });
   return res.data.access_token;
 }
-
 // --- TELA ---
 app.get('/', (req, res) => {
   res.send(`
